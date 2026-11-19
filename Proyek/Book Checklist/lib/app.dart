@@ -11,6 +11,7 @@ import 'features/library_screen.dart';
 import 'features/profile_screen.dart';
 import 'features/search_screen.dart';
 import 'features/shell/app_shell.dart';
+import 'features/auth_screen.dart';
 import 'providers/app_providers.dart';
 
 final _router = GoRouter(
@@ -75,7 +76,7 @@ final _router = GoRouter(
     GoRoute(
       path: '/entry/:id',
       builder: (context, state) =>
-          EntryDetailScreen(id: int.parse(state.pathParameters['id']!)),
+          EntryDetailScreen(id: state.pathParameters['id']!),
     ),
     GoRoute(path: '/search', builder: (context, state) => const SearchScreen()),
   ],
@@ -87,13 +88,52 @@ class MyShelfApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(themeModeProvider).asData?.value ?? ThemeMode.dark;
-    return MaterialApp.router(
-      title: 'MyShelf',
-      debugShowCheckedModeBanner: false,
-      theme: shelfTheme(Brightness.light),
-      darkTheme: shelfTheme(Brightness.dark),
-      themeMode: mode,
-      routerConfig: _router,
-    );
+    return ref
+        .watch(authStateProvider)
+        .when(
+          loading: () => MaterialApp(
+            title: 'MyShelf',
+            theme: shelfTheme(Brightness.light),
+            darkTheme: shelfTheme(Brightness.dark),
+            themeMode: mode,
+            home: const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+          error: (error, stack) => MaterialApp(
+            title: 'MyShelf',
+            theme: shelfTheme(Brightness.light),
+            darkTheme: shelfTheme(Brightness.dark),
+            themeMode: mode,
+            home: Scaffold(
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'Could not check your sign-in status: $error',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          data: (user) => user == null
+              ? MaterialApp(
+                  title: 'MyShelf',
+                  debugShowCheckedModeBanner: false,
+                  theme: shelfTheme(Brightness.light),
+                  darkTheme: shelfTheme(Brightness.dark),
+                  themeMode: mode,
+                  home: const AuthScreen(),
+                )
+              : MaterialApp.router(
+                  title: 'MyShelf',
+                  debugShowCheckedModeBanner: false,
+                  theme: shelfTheme(Brightness.light),
+                  darkTheme: shelfTheme(Brightness.dark),
+                  themeMode: mode,
+                  routerConfig: _router,
+                ),
+        );
   }
 }

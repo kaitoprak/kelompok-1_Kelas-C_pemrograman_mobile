@@ -84,7 +84,7 @@ class MediaEntry {
     required this.updatedAt,
   });
 
-  final int? id;
+  final String? id;
   final MediaType type;
   final String title;
   final String creator;
@@ -128,7 +128,7 @@ class MediaEntry {
   };
 
   MediaEntry copyWith({
-    int? id,
+    String? id,
     MediaType? type,
     String? title,
     String? creator,
@@ -208,7 +208,7 @@ class MediaEntry {
   };
 
   factory MediaEntry.fromMap(Map<String, Object?> map) => MediaEntry(
-    id: map['id'] as int?,
+    id: map['id']?.toString(),
     type: MediaType.values.byName(map['type']! as String),
     title: map['title']! as String,
     creator: map['creator'] as String? ?? '',

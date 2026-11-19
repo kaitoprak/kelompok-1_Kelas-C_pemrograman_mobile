@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../core/utils/image_storage.dart';
 import '../core/widgets/media_cover.dart';
+import '../data/media_catalog_service.dart';
 import '../domain/media_entry.dart';
 import '../providers/app_providers.dart';
 
@@ -41,6 +42,7 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
   DateTime? _startedAt;
   DateTime? _completedAt;
   bool _saving = false;
+  bool _searching = false;
 
   MediaEntry? get _entry => widget.entry;
 
@@ -178,6 +180,125 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
     if (selected != null && mounted) setState(() => _completedAt = selected);
   }
 
+  Future<void> _searchCatalog() async {
+    final query = _title.text.trim();
+    if (query.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Enter a title to search.')));
+      return;
+    }
+
+    setState(() => _searching = true);
+    try {
+      final service = ref.read(mediaCatalogProvider);
+      final results = await service.search(widget.type, query);
+      if (!mounted) return;
+      if (results.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No matching titles found.')),
+        );
+        return;
+      }
+
+      final selected = await showModalBottomSheet<MediaSearchResult>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => _catalogResultsSheet(context, results),
+      );
+      if (selected == null || !mounted) return;
+
+      _applyCatalogResult(selected);
+      if (widget.type == MediaType.series && selected.externalId != null) {
+        try {
+          final details = await service.loadSeriesDetails(selected);
+          if (mounted) {
+            setState(() {
+              _seasons.text = _countText(details.totalSeasons);
+              _episodes.text = _countText(details.totalEpisodes);
+            });
+          }
+        } catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Series details were filled, but episode counts could not be loaded: $error',
+                ),
+              ),
+            );
+          }
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not search the catalog: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  void _applyCatalogResult(MediaSearchResult result) {
+    setState(() {
+      _title.text = result.title;
+      _creator.text = result.creator;
+      _genre.text = result.genre;
+      _year.text = result.releaseYear?.toString() ?? '';
+      _imageUrl.text = result.imageUrl;
+      _synopsis.text = result.synopsis;
+      _totalPages.text = _countText(result.totalPages);
+      _duration.text = _countText(result.durationMinutes);
+      _seasons.text = _countText(result.totalSeasons);
+      _episodes.text = _countText(result.totalEpisodes);
+    });
+  }
+
+  Widget _catalogResultsSheet(
+    BuildContext context,
+    List<MediaSearchResult> results,
+  ) => SafeArea(
+    child: SizedBox(
+      height: MediaQuery.sizeOf(context).height * 0.65,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Choose a matching title',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+          ),
+          Expanded(
+            child: ListView.separated(
+              itemCount: results.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final result = results[index];
+                final details = [
+                  if (result.creator.isNotEmpty) result.creator,
+                  if (result.releaseYear != null) result.releaseYear.toString(),
+                ].join(' · ');
+                return ListTile(
+                  title: Text(result.title),
+                  subtitle: details.isEmpty ? null : Text(details),
+                  onTap: () => Navigator.of(context).pop(result),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  String _countText(int count) => count == 0 ? '' : '$count';
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
@@ -275,6 +396,27 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
                 required: true,
                 textCapitalization: TextCapitalization.words,
               ),
+              if (_entry == null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: _searching ? null : _searchCatalog,
+                    icon: _searching
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.manage_search_rounded),
+                    label: Text(
+                      _searching
+                          ? 'Searching…'
+                          : 'Search online to fill details',
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               _field(_creator, isBook ? 'Author' : 'Director / creator'),
               const SizedBox(height: 12),

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
@@ -257,6 +258,27 @@ class ProfileScreen extends ConsumerWidget {
                         ),
                       ),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: ListTile(
+                    leading: const Icon(Icons.logout_rounded),
+                    title: const Text('Sign out'),
+                    onTap: () async {
+                      try {
+                        await ref.read(authRepositoryProvider).signOut();
+                      } on FirebaseException catch (error) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Could not sign out: $error'),
+                            ),
+                          );
+                        }
+                      }
+                    },
                   ),
                 ),
                 const SizedBox(height: 22),

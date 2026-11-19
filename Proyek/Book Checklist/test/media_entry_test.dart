@@ -63,6 +63,12 @@ void main() {
     expect(restored.genre, 'Fantasy');
     expect(restored.startedAt, DateTime(2026, 2, 3));
   });
+
+  test('preserves string document IDs through the map format', () {
+    final original = _entry(type: MediaType.book).copyWith(id: 'shelf-item-42');
+
+    expect(MediaEntry.fromMap(original.toMap()).id, 'shelf-item-42');
+  });
 }
 
 MediaEntry _entry({
