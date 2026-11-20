@@ -48,8 +48,3 @@ app.*.map.json
 .widget_preview/
 
 .agents/
-
-docs/
-
-functions/node_modules/
-functions/lib/
