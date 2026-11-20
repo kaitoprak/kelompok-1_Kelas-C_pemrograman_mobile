@@ -6,6 +6,8 @@ import '../core/theme/app_theme.dart';
 import '../core/widgets/shelf_widgets.dart';
 import '../domain/media_entry.dart';
 import '../providers/app_providers.dart';
+import '../providers/social_providers.dart';
+import 'social/social_widgets.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -346,6 +348,14 @@ class HomeScreen extends ConsumerWidget {
                                       ),
                                     ),
                                   ),
+                            const SizedBox(height: 20),
+                            SectionHeading(
+                              'Community',
+                              actionLabel: 'Open',
+                              onAction: () => context.go('/community'),
+                            ),
+                            const SizedBox(height: 10),
+                            const _CommunityPreview(),
                           ],
                         ),
                       ),
@@ -357,6 +367,83 @@ class HomeScreen extends ConsumerWidget {
           },
         ),
       ),
+    );
+  }
+}
+
+class _CommunityPreview extends ConsumerWidget {
+  const _CommunityPreview();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profile = ref.watch(currentSocialProfileProvider);
+    return profile.when(
+      loading: () => const Card(
+        child: Padding(
+          padding: EdgeInsets.all(18),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ),
+      error: (error, stack) => Card(
+        child: ListTile(
+          leading: const Icon(Icons.forum_outlined),
+          title: const Text('Community is unavailable right now.'),
+          subtitle: Text('$error'),
+          trailing: IconButton(
+            tooltip: 'Open community',
+            onPressed: () => context.go('/community'),
+            icon: const Icon(Icons.chevron_right_rounded),
+          ),
+        ),
+      ),
+      data: (value) => ref
+          .watch(communityFeedProvider(value.uid))
+          .when(
+            loading: () => const Card(
+              child: Padding(
+                padding: EdgeInsets.all(18),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            ),
+            error: (error, stack) => Card(
+              child: ListTile(
+                leading: const Icon(Icons.forum_outlined),
+                title: const Text('Could not load the community feed.'),
+                subtitle: Text('$error'),
+                trailing: IconButton(
+                  tooltip: 'Open community',
+                  onPressed: () => context.go('/community'),
+                  icon: const Icon(Icons.chevron_right_rounded),
+                ),
+              ),
+            ),
+            data: (posts) => posts.isEmpty
+                ? Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.forum_outlined),
+                      title: const Text('Meet other readers'),
+                      subtitle: const Text(
+                        'Share a thought or rating to get started.',
+                      ),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => context.go('/community'),
+                    ),
+                  )
+                : Column(
+                    children: [
+                      for (final post in posts.take(2))
+                        SocialPostCard(post: post),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () => context.go('/community'),
+                          icon: const Icon(Icons.arrow_forward_rounded),
+                          label: const Text('See all posts'),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
     );
   }
 }
