@@ -1,7 +1,0 @@
-# Kelompok 01 - Pemrograman Mobile
-
-## Anggota Kelompok
-
-1. **Sabrun Rifqi Ahmad - D121241087 - [@kaitoprak](https://github.com/kaitoprak)**
-2. **Raja Afraddiaz Irluvni Duse - D121241033 - [@rajainterlinked](https://github.com/rajainterlinked)**
-3. **Muh. Fauzan Dwi Riyan - D121241051 - [@ofarii](https://github.com/ofarii)**
