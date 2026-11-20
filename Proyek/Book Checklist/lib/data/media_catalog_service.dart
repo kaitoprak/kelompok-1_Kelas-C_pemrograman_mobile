@@ -145,6 +145,7 @@ class MediaCatalogService {
           'pithumbsize': '300',
           'format': 'json',
           'redirects': '1',
+          'origin': '*',
         }),
       ),
     );

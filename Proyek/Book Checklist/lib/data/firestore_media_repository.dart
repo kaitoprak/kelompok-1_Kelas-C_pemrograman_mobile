@@ -17,6 +17,8 @@ class FirestoreMediaRepository {
     return _firestore.collection('users').doc(user.uid).collection('media');
   }
 
+  String newEntryId() => _entriesForCurrentUser().doc().id;
+
   Future<List<MediaEntry>> getAll() async {
     final snapshot = await _entriesForCurrentUser()
         .orderBy('updated_at', descending: true)

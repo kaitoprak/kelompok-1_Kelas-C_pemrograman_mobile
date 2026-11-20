@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../core/utils/image_storage.dart';
 import '../core/widgets/media_cover.dart';
+import '../core/widgets/rating_stars.dart';
 import '../data/media_catalog_service.dart';
 import '../domain/media_entry.dart';
 import '../providers/app_providers.dart';
@@ -35,14 +38,19 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
   late final TextEditingController _episodes;
   late final TextEditingController _currentSeason;
   late final TextEditingController _currentEpisode;
-  late final TextEditingController _rating;
   late final TextEditingController _notes;
   late MediaStatus _status;
+  double? _ratingValue;
   String? _imagePath;
   DateTime? _startedAt;
   DateTime? _completedAt;
   bool _saving = false;
   bool _searching = false;
+  bool _catalogSearchCompleted = false;
+  String? _catalogSearchError;
+  List<MediaSearchResult> _catalogResults = const [];
+  Timer? _catalogSearchDebounce;
+  int _catalogSearchGeneration = 0;
 
   MediaEntry? get _entry => widget.entry;
 
@@ -85,9 +93,7 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
           ? ''
           : '${entry.currentEpisode}',
     );
-    _rating = TextEditingController(
-      text: entry?.rating == null ? '' : '${entry!.rating}',
-    );
+    _ratingValue = entry?.rating;
     _notes = TextEditingController(text: entry?.notes ?? '');
     _status = entry?.status ?? statusesFor(widget.type).first;
     _imagePath = entry?.imagePath;
@@ -97,6 +103,8 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
 
   @override
   void dispose() {
+    _catalogSearchDebounce?.cancel();
+    _catalogSearchGeneration++;
     for (final controller in [
       _title,
       _creator,
@@ -111,7 +119,6 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
       _episodes,
       _currentSeason,
       _currentEpisode,
-      _rating,
       _notes,
     ]) {
       controller.dispose();
@@ -122,16 +129,9 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
   int _number(TextEditingController controller) =>
       int.tryParse(controller.text.trim()) ?? 0;
 
-  String? _optionalNumber(
-    String? value, {
-    int? min,
-    int? max,
-    bool decimal = false,
-  }) {
+  String? _optionalNumber(String? value, {int? min, int? max}) {
     if (value == null || value.trim().isEmpty) return null;
-    final parsed = decimal
-        ? double.tryParse(value.trim())
-        : int.tryParse(value.trim())?.toDouble();
+    final parsed = int.tryParse(value.trim());
     if (parsed == null) return 'Enter a valid number';
     if (min != null && parsed < min) return 'Must be at least $min';
     if (max != null && parsed > max) return 'Must be $max or less';
@@ -180,64 +180,79 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
     if (selected != null && mounted) setState(() => _completedAt = selected);
   }
 
-  Future<void> _searchCatalog() async {
-    final query = _title.text.trim();
-    if (query.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Enter a title to search.')));
-      return;
-    }
+  void _onTitleChanged(String value) {
+    _catalogSearchDebounce?.cancel();
+    final generation = ++_catalogSearchGeneration;
+    final query = value.trim();
+    setState(() {
+      _searching = false;
+      _catalogSearchCompleted = false;
+      _catalogSearchError = null;
+      _catalogResults = const [];
+    });
+    if (query.length < 2) return;
 
+    _catalogSearchDebounce = Timer(const Duration(milliseconds: 450), () {
+      _searchCatalog(query, generation);
+    });
+  }
+
+  Future<void> _searchCatalog(String query, int generation) async {
+    if (!mounted || generation != _catalogSearchGeneration) return;
     setState(() => _searching = true);
     try {
-      final service = ref.read(mediaCatalogProvider);
-      final results = await service.search(widget.type, query);
-      if (!mounted) return;
-      if (results.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No matching titles found.')),
-        );
-        return;
-      }
-
-      final selected = await showModalBottomSheet<MediaSearchResult>(
-        context: context,
-        isScrollControlled: true,
-        builder: (context) => _catalogResultsSheet(context, results),
-      );
-      if (selected == null || !mounted) return;
-
-      _applyCatalogResult(selected);
-      if (widget.type == MediaType.series && selected.externalId != null) {
-        try {
-          final details = await service.loadSeriesDetails(selected);
-          if (mounted) {
-            setState(() {
-              _seasons.text = _countText(details.totalSeasons);
-              _episodes.text = _countText(details.totalEpisodes);
-            });
-          }
-        } catch (error) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Series details were filled, but episode counts could not be loaded: $error',
-                ),
-              ),
-            );
-          }
-        }
-      }
+      final results = await ref
+          .read(mediaCatalogProvider)
+          .search(widget.type, query);
+      if (!mounted || generation != _catalogSearchGeneration) return;
+      setState(() {
+        _catalogResults = results;
+        _catalogSearchCompleted = true;
+      });
     } catch (error) {
-      if (mounted) {
+      if (!mounted || generation != _catalogSearchGeneration) return;
+      setState(() {
+        _catalogSearchError = 'Could not search the catalog: $error';
+        _catalogSearchCompleted = true;
+      });
+    } finally {
+      if (mounted && generation == _catalogSearchGeneration) {
+        setState(() => _searching = false);
+      }
+    }
+  }
+
+  Future<void> _selectCatalogResult(MediaSearchResult result) async {
+    _catalogSearchDebounce?.cancel();
+    final generation = ++_catalogSearchGeneration;
+    setState(() {
+      _catalogResults = const [];
+      _catalogSearchCompleted = false;
+      _catalogSearchError = null;
+      _searching = false;
+    });
+    _applyCatalogResult(result);
+
+    if (widget.type != MediaType.series || result.externalId == null) return;
+    try {
+      final details = await ref
+          .read(mediaCatalogProvider)
+          .loadSeriesDetails(result);
+      if (!mounted || generation != _catalogSearchGeneration) return;
+      setState(() {
+        _seasons.text = _countText(details.totalSeasons);
+        _episodes.text = _countText(details.totalEpisodes);
+      });
+    } catch (error) {
+      if (mounted && generation == _catalogSearchGeneration) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not search the catalog: $error')),
+          SnackBar(
+            content: Text(
+              'Series details were filled, but episode counts could not be loaded: $error',
+            ),
+          ),
         );
       }
-    } finally {
-      if (mounted) setState(() => _searching = false);
     }
   }
 
@@ -256,50 +271,43 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
     });
   }
 
-  Widget _catalogResultsSheet(
-    BuildContext context,
-    List<MediaSearchResult> results,
-  ) => SafeArea(
-    child: SizedBox(
-      height: MediaQuery.sizeOf(context).height * 0.65,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Choose a matching title',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-            ),
-          ),
-          Expanded(
-            child: ListView.separated(
-              itemCount: results.length,
-              separatorBuilder: (_, _) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                final result = results[index];
-                final details = [
-                  if (result.creator.isNotEmpty) result.creator,
-                  if (result.releaseYear != null) result.releaseYear.toString(),
-                ].join(' · ');
-                return ListTile(
-                  title: Text(result.title),
-                  subtitle: details.isEmpty ? null : Text(details),
-                  onTap: () => Navigator.of(context).pop(result),
-                );
-              },
-            ),
-          ),
+  Widget _catalogSuggestions(BuildContext context) => Card(
+    clipBehavior: Clip.antiAlias,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const ListTile(dense: true, title: Text('Suggestions')),
+        for (
+          var index = 0;
+          index < _catalogResults.length && index < 5;
+          index++
+        ) ...[
+          if (index > 0) const Divider(height: 1, indent: 16),
+          _catalogResultTile(context, _catalogResults[index]),
         ],
-      ),
+      ],
     ),
   );
 
+  Widget _catalogResultTile(BuildContext context, MediaSearchResult result) {
+    final details = [
+      if (result.creator.isNotEmpty) result.creator,
+      if (result.releaseYear != null) '${result.releaseYear}',
+    ].join(' · ');
+    return ListTile(
+      leading: const Icon(Icons.search_rounded),
+      title: Text(result.title, maxLines: 1),
+      subtitle: details.isEmpty ? null : Text(details, maxLines: 1),
+      onTap: () {
+        FocusScope.of(context).unfocus();
+        _selectCatalogResult(result);
+      },
+    );
+  }
+
   String _countText(int count) => count == 0 ? '' : '$count';
 
-  Future<void> _save() async {
+  void _save() {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     final now = DateTime.now();
@@ -337,7 +345,7 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
           ? _number(_currentEpisode)
           : 0,
       status: _status,
-      rating: double.tryParse(_rating.text.trim()),
+      rating: _ratingValue,
       notes: _notes.text.trim(),
       startedAt: started,
       completedAt: completed,
@@ -345,25 +353,32 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
       updatedAt: now,
     );
 
-    try {
-      await ref.read(mediaEntriesProvider.notifier).save(entry);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _entry == null
-                ? '${widget.type.label} added to your shelf'
-                : 'Changes saved',
-          ),
-        ),
-      );
-      context.pop();
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _saving = false);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Could not save: $error')));
-    }
+    final messenger = ScaffoldMessenger.of(context);
+    final saveFuture = ref.read(mediaEntriesProvider.notifier).save(entry);
+    final successMessage = _entry == null
+        ? '${widget.type.label} added to your shelf'
+        : 'Changes saved';
+    context.pop();
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Saving to your shelf…')),
+    );
+    unawaited(
+      saveFuture
+          .then<void>((_) {
+            if (messenger.mounted) {
+              messenger.hideCurrentSnackBar();
+              messenger.showSnackBar(SnackBar(content: Text(successMessage)));
+            }
+          })
+          .catchError((Object error) {
+            if (messenger.mounted) {
+              messenger.hideCurrentSnackBar();
+              messenger.showSnackBar(
+                SnackBar(content: Text('Could not save: $error')),
+              );
+            }
+          }),
+    );
   }
 
   @override
@@ -395,27 +410,36 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
                 'Title',
                 required: true,
                 textCapitalization: TextCapitalization.words,
+                onChanged: _entry == null ? _onTitleChanged : null,
               ),
               if (_entry == null) ...[
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    onPressed: _searching ? null : _searchCatalog,
-                    icon: _searching
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.manage_search_rounded),
-                    label: Text(
-                      _searching
-                          ? 'Searching…'
-                          : 'Search online to fill details',
+                if (_searching)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: LinearProgressIndicator(),
+                  ),
+                if (_catalogResults.isNotEmpty) _catalogSuggestions(context),
+                if (_catalogSearchError case final error?)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      error,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ),
-                ),
+                if (_catalogSearchCompleted &&
+                    !_searching &&
+                    _catalogResults.isEmpty &&
+                    _catalogSearchError == null)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('No matching titles found.'),
+                    ),
+                  ),
               ],
               const SizedBox(height: 12),
               _field(_creator, isBook ? 'Author' : 'Director / creator'),
@@ -606,17 +630,16 @@ class _EditEntryScreenState extends ConsumerState<EditEntryScreen> {
                 ),
               ],
               const SizedBox(height: 12),
-              _field(
-                _rating,
-                'Your rating (0–5)',
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                ],
-                validator: (value) =>
-                    _optionalNumber(value, min: 0, max: 5, decimal: true),
+              Text(
+                'Your rating',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              const SizedBox(height: 4),
+              RatingStars(
+                rating: _ratingValue,
+                iconSize: 28,
+                showValue: true,
+                onChanged: (rating) => setState(() => _ratingValue = rating),
               ),
               const SizedBox(height: 22),
               _sectionLabel(context, 'Dates & notes'),

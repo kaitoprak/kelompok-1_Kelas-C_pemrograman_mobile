@@ -52,6 +52,7 @@ void main() {
         client: MockClient((request) async {
           expect(request.url.host, 'en.wikipedia.org');
           expect(request.url.queryParameters['gsrsearch'], 'Arrival film');
+          expect(request.url.queryParameters['origin'], '*');
           return http.Response(
             jsonEncode({
               'query': {

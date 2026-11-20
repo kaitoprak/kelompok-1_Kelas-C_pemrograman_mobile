@@ -46,10 +46,13 @@ and sign-out. Shelf data is isolated by authenticated account.
 ## Features
 
 - Home dashboard with activity counts, in-progress items, and recent additions/completions
-- Create, edit, search, filter, sort, rate, and delete books, movies, and series
-- Search online catalogs by title and fill available metadata from Open Library,
-  Wikipedia, and TVmaze (requires an internet connection)
+- Create, edit, search, filter, sort, rate with stars, and delete books, movies,
+  and series
+- Get live title suggestions while typing and fill available metadata from
+  Open Library, Wikipedia, and TVmaze (requires an internet connection)
 - Page and episode progress tracking with completion dates
+- Optimistic saves that update the shelf immediately and roll back if Firestore
+  rejects a write
 - Dark, light, and system appearance preferences
 - JSON backup shared through the platform share sheet
 - Firebase email/password authentication and per-account Firestore authorization

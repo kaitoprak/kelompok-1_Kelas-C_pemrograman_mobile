@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../core/theme/app_theme.dart';
 import '../core/widgets/media_cover.dart';
+import '../core/widgets/rating_stars.dart';
 import '../core/widgets/shelf_widgets.dart';
 import '../domain/media_entry.dart';
 import '../providers/app_providers.dart';
@@ -131,16 +132,10 @@ class _DetailView extends ConsumerWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(
-                          Icons.star_rounded,
-                          color: ShelfColors.book,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${entry.rating!.toStringAsFixed(entry.rating! % 1 == 0 ? 0 : 1)} / 5',
-                          style: Theme.of(context).textTheme.titleSmall
-                              ?.copyWith(fontWeight: FontWeight.w700),
+                        RatingStars(
+                          rating: entry.rating,
+                          iconSize: 20,
+                          showValue: true,
                         ),
                       ],
                     ),
@@ -266,11 +261,20 @@ class _DetailView extends ConsumerWidget {
       currentEpisode: entry.type == MediaType.series
           ? entry.totalEpisodes
           : entry.currentEpisode,
+      currentSeason: entry.type == MediaType.series && entry.totalSeasons > 0
+          ? entry.totalSeasons
+          : entry.currentSeason,
       completedAt: now,
       startedAt: entry.startedAt ?? now,
       updatedAt: now,
     );
-    await ref.read(mediaEntriesProvider.notifier).save(updated);
+    try {
+      await ref.read(mediaEntriesProvider.notifier).save(updated);
+    } catch (error) {
+      if (!context.mounted) return;
+      _showActionError(context, 'Could not mark item as complete', error);
+      return;
+    }
     if (context.mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Marked as completed')));
@@ -278,41 +282,11 @@ class _DetailView extends ConsumerWidget {
   }
 
   Future<void> _updateProgress(BuildContext context, WidgetRef ref) async {
-    final controller = TextEditingController(
-      text:
-          '${entry.type == MediaType.book ? entry.pagesRead : entry.currentEpisode}',
-    );
     final isBook = entry.type == MediaType.book;
     final result = await showDialog<int>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(isBook ? 'Pages read' : 'Last episode watched'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: InputDecoration(
-            labelText: isBook ? 'Page number' : 'Episode number',
-            helperText: isBook
-                ? 'Out of ${entry.totalPages} pages'
-                : 'Out of ${entry.totalEpisodes} episodes',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, int.tryParse(controller.text)),
-            child: const Text('Update'),
-          ),
-        ],
-      ),
+      builder: (_) => _ProgressUpdateDialog(entry: entry),
     );
-    controller.dispose();
     if (result == null || !context.mounted) return;
     final max = isBook ? entry.totalPages : entry.totalEpisodes;
     if (max > 0 && result > max) {
@@ -350,7 +324,13 @@ class _DetailView extends ConsumerWidget {
             startedAt: entry.startedAt ?? now,
             updatedAt: now,
           );
-    await ref.read(mediaEntriesProvider.notifier).save(updated);
+    try {
+      await ref.read(mediaEntriesProvider.notifier).save(updated);
+    } catch (error) {
+      if (!context.mounted) return;
+      _showActionError(context, 'Could not update progress', error);
+      return;
+    }
     if (context.mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Progress updated')));
@@ -409,13 +389,25 @@ class _DetailView extends ConsumerWidget {
       ),
     );
     if (confirm != true || entry.id == null || !context.mounted) return;
-    await ref.read(mediaEntriesProvider.notifier).delete(entry.id!);
+    try {
+      await ref.read(mediaEntriesProvider.notifier).delete(entry.id!);
+    } catch (error) {
+      if (!context.mounted) return;
+      _showActionError(context, 'Could not remove item from your shelf', error);
+      return;
+    }
     if (context.mounted) {
       context.pop();
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Removed from your shelf')));
     }
+  }
+
+  void _showActionError(BuildContext context, String message, Object error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('$message: $error')));
   }
 
   static Widget _detailValue(
@@ -511,6 +503,7 @@ class _ProgressCard extends StatelessWidget {
 
 class _InfoCard extends StatelessWidget {
   const _InfoCard({required this.title, required this.child});
+
   final String title;
   final Widget child;
 
@@ -531,5 +524,61 @@ class _InfoCard extends StatelessWidget {
         ],
       ),
     ),
+  );
+}
+
+class _ProgressUpdateDialog extends StatefulWidget {
+  const _ProgressUpdateDialog({required this.entry});
+
+  final MediaEntry entry;
+
+  @override
+  State<_ProgressUpdateDialog> createState() => _ProgressUpdateDialogState();
+}
+
+class _ProgressUpdateDialogState extends State<_ProgressUpdateDialog> {
+  late final TextEditingController _controller;
+
+  bool get _isBook => widget.entry.type == MediaType.book;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+      text: '${_isBook ? widget.entry.pagesRead : widget.entry.currentEpisode}',
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(_isBook ? 'Pages read' : 'Last episode watched'),
+    content: TextField(
+      controller: _controller,
+      autofocus: true,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(
+        labelText: _isBook ? 'Page number' : 'Episode number',
+        helperText: _isBook
+            ? 'Out of ${widget.entry.totalPages} pages'
+            : 'Out of ${widget.entry.totalEpisodes} episodes',
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, int.tryParse(_controller.text)),
+        child: const Text('Update'),
+      ),
+    ],
   );
 }

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../domain/media_entry.dart';
 import '../theme/app_theme.dart';
 import 'media_cover.dart';
+import 'rating_stars.dart';
 
 class SectionHeading extends StatelessWidget {
   const SectionHeading(
@@ -148,18 +149,7 @@ class EntryTile extends StatelessWidget {
                         ),
                         if (entry.rating != null) ...[
                           const SizedBox(width: 6),
-                          const Icon(
-                            Icons.star_rounded,
-                            size: 16,
-                            color: ShelfColors.book,
-                          ),
-                          Text(
-                            entry.rating!.toStringAsFixed(
-                              entry.rating! % 1 == 0 ? 0 : 1,
-                            ),
-                            style: Theme.of(context).textTheme.labelMedium
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
+                          RatingStars(rating: entry.rating, iconSize: 13),
                         ],
                       ],
                     ),

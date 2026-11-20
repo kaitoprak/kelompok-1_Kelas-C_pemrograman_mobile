@@ -52,20 +52,73 @@ class MediaEntriesController extends AsyncNotifier<List<MediaEntry>> {
   }
 
   Future<MediaEntry> save(MediaEntry entry) async {
-    final saved = await ref.read(mediaRepositoryProvider).save(entry);
-    state = AsyncData(await ref.read(mediaRepositoryProvider).getAll());
-    return saved;
+    final repository = ref.read(mediaRepositoryProvider);
+    final entries = state.asData?.value;
+    final previousEntries = entries ?? await repository.getAll();
+    if (entries == null) state = AsyncData(previousEntries);
+
+    final id = entry.id ?? repository.newEntryId();
+    final optimisticEntry = entry.copyWith(id: id);
+    final previousEntry = _findEntry(previousEntries, id);
+    state = AsyncData(_upsertEntry(previousEntries, optimisticEntry));
+
+    try {
+      final saved = await repository.save(optimisticEntry);
+      final currentEntries = state.asData?.value;
+      if (currentEntries == null) {
+        state = AsyncData(await repository.getAll());
+      } else if (identical(_findEntry(currentEntries, id), optimisticEntry)) {
+        state = AsyncData(_upsertEntry(currentEntries, saved));
+      }
+      return saved;
+    } catch (_) {
+      final currentEntries = state.asData?.value;
+      if (currentEntries != null &&
+          identical(_findEntry(currentEntries, id), optimisticEntry)) {
+        final rolledBack = currentEntries
+            .where((current) => current.id != id)
+            .toList();
+        if (previousEntry != null) rolledBack.add(previousEntry);
+        rolledBack.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        state = AsyncData(rolledBack);
+      }
+      rethrow;
+    }
   }
 
   Future<void> delete(String id) async {
-    await ref.read(mediaRepositoryProvider).delete(id);
-    state = AsyncData(await ref.read(mediaRepositoryProvider).getAll());
+    final repository = ref.read(mediaRepositoryProvider);
+    await repository.delete(id);
+    final entries = state.asData?.value;
+    state = AsyncData(
+      entries == null
+          ? await repository.getAll()
+          : entries.where((entry) => entry.id != id).toList(growable: false),
+    );
   }
 
   Future<void> refresh() async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(ref.read(mediaRepositoryProvider).getAll);
   }
+}
+
+MediaEntry? _findEntry(List<MediaEntry> entries, String id) {
+  for (final entry in entries) {
+    if (entry.id == id) return entry;
+  }
+  return null;
+}
+
+List<MediaEntry> _upsertEntry(
+  List<MediaEntry> entries,
+  MediaEntry replacement,
+) {
+  final updated = [
+    ...entries.where((entry) => entry.id != replacement.id),
+    replacement,
+  ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  return updated;
 }
 
 final themeModeProvider = AsyncNotifierProvider<ThemeModeController, ThemeMode>(
