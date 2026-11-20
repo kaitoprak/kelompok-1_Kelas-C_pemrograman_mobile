@@ -21,11 +21,6 @@ class AppShell extends StatelessWidget {
           label: 'Home',
         ),
         NavigationDestination(
-          icon: Icon(Icons.forum_outlined),
-          selectedIcon: Icon(Icons.forum_rounded),
-          label: 'Community',
-        ),
-        NavigationDestination(
           icon: Icon(Icons.menu_book_rounded),
           label: 'Books',
         ),
