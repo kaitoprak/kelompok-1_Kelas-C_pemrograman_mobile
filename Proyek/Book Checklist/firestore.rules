@@ -1,15 +1,228 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
     function isOwner(userId) {
-      return request.auth != null && request.auth.uid == userId;
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function validUsername(value) {
+      return value is string && value.matches('^[a-z][a-z0-9_]{2,19}$');
+    }
+
+    function activeFollow(followerId, followeeId) {
+      let followPath = /databases/$(database)/documents/follows/$(followerId + '_' + followeeId);
+      return exists(followPath) && get(followPath).data.status == 'active';
+    }
+
+    function canReadPost(authorId, visibility) {
+      return signedIn() &&
+        (authorId == request.auth.uid ||
+          visibility == 'public' ||
+          activeFollow(request.auth.uid, authorId));
     }
 
     match /users/{userId} {
       allow read, write: if isOwner(userId);
 
-      match /{document=**} {
+      match /media/{entryId} {
         allow read, write: if isOwner(userId);
+      }
+
+      match /notifications/{notificationId} {
+        allow read: if isOwner(userId);
+        allow create: if false;
+        allow update: if isOwner(userId) &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['isRead', 'readAt']) &&
+          request.resource.data.isRead == true &&
+          request.resource.data.readAt == request.time;
+        allow delete: if isOwner(userId);
+      }
+
+      match /fcm_tokens/{tokenId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+          request.resource.data.keys().hasOnly(['token', 'createdAt']) &&
+          request.resource.data.token is string &&
+          request.resource.data.token.size() > 0 &&
+          request.resource.data.token.size() <= 4096;
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    match /profiles/{userId} {
+      allow read: if signedIn();
+      allow create: if isOwner(userId) &&
+        request.resource.data.keys().hasOnly([
+          'uid', 'username', 'usernameLower', 'displayName',
+          'isPrivate', 'privacyUpdating', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.uid == userId &&
+        validUsername(request.resource.data.username) &&
+        request.resource.data.usernameLower == request.resource.data.username &&
+        request.resource.data.displayName is string &&
+        request.resource.data.displayName.size() > 0 &&
+        request.resource.data.displayName.size() <= 40 &&
+        request.resource.data.isPrivate is bool &&
+        request.resource.data.privacyUpdating == false &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time &&
+        getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.usernameLower)).data.uid == userId;
+      allow update: if isOwner(userId) &&
+        request.resource.data.keys().hasOnly([
+          'uid', 'username', 'usernameLower', 'displayName',
+          'isPrivate', 'privacyUpdating', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.uid == userId &&
+        validUsername(request.resource.data.username) &&
+        request.resource.data.usernameLower == request.resource.data.username &&
+        request.resource.data.displayName is string &&
+        request.resource.data.displayName.size() > 0 &&
+        request.resource.data.displayName.size() <= 40 &&
+        request.resource.data.isPrivate is bool &&
+        request.resource.data.privacyUpdating is bool &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time &&
+        getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.usernameLower)).data.uid == userId;
+      allow delete: if false;
+    }
+
+    match /usernames/{username} {
+      allow read: if signedIn();
+      allow create: if signedIn() &&
+        request.resource.data.keys().hasOnly(['uid', 'username']) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.username == username &&
+        validUsername(username) &&
+        getAfter(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.usernameLower == username;
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /follows/{followId} {
+      allow get: if signedIn() &&
+        (followId.matches('^' + request.auth.uid + '_.*$') ||
+          followId.matches('^.*_' + request.auth.uid + '$'));
+      allow list: if signedIn() &&
+        (resource.data.followerId == request.auth.uid ||
+          resource.data.followeeId == request.auth.uid);
+      allow create: if signedIn() &&
+        request.resource.data.keys().hasOnly([
+          'followerId', 'followeeId', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.followerId == request.auth.uid &&
+        request.resource.data.followeeId != request.auth.uid &&
+        followId == request.auth.uid + '_' + request.resource.data.followeeId &&
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
+        exists(/databases/$(database)/documents/profiles/$(request.resource.data.followeeId)) &&
+        request.resource.data.status ==
+          (get(/databases/$(database)/documents/profiles/$(request.resource.data.followeeId)).data.isPrivate
+            ? 'pending'
+            : 'active') &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+      allow update: if signedIn() &&
+        resource.data.followeeId == request.auth.uid &&
+        resource.data.status == 'pending' &&
+        request.resource.data.keys().hasOnly([
+          'followerId', 'followeeId', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.status == 'active' &&
+        request.resource.data.followerId == resource.data.followerId &&
+        request.resource.data.followeeId == resource.data.followeeId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time;
+      allow delete: if signedIn() &&
+        (resource.data.followerId == request.auth.uid ||
+          resource.data.followeeId == request.auth.uid);
+    }
+
+    match /posts/{postId} {
+      allow read: if canReadPost(resource.data.authorId, resource.data.visibility);
+      allow create: if signedIn() &&
+        request.resource.data.keys().hasOnly([
+          'authorId', 'authorUsername', 'authorDisplayName', 'kind',
+          'text', 'mediaTitle', 'mediaType', 'rating', 'visibility',
+          'createdAt'
+        ]) &&
+        request.resource.data.authorId == request.auth.uid &&
+        request.resource.data.authorUsername is string &&
+        request.resource.data.authorDisplayName is string &&
+        request.resource.data.authorUsername ==
+          get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.username &&
+        request.resource.data.authorDisplayName ==
+          get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.displayName &&
+        request.resource.data.kind in ['post', 'rating'] &&
+        request.resource.data.text is string &&
+        request.resource.data.text.size() <= 1000 &&
+        request.resource.data.mediaTitle is string &&
+        request.resource.data.mediaTitle.size() <= 120 &&
+        (request.resource.data.text.size() > 0 ||
+          request.resource.data.mediaTitle.size() > 0) &&
+        request.resource.data.mediaType in ['book', 'movie', 'series', ''] &&
+        request.resource.data.visibility in ['public', 'followers'] &&
+        request.resource.data.visibility ==
+          (get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.isPrivate
+            ? 'followers'
+            : 'public') &&
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.privacyUpdating == false &&
+        (request.resource.data.kind == 'post'
+          ? request.resource.data.rating == null
+          : request.resource.data.rating is number &&
+            request.resource.data.rating >= 0 &&
+            request.resource.data.rating <= 5) &&
+        request.resource.data.createdAt == request.time;
+      allow update: if signedIn() &&
+        resource.data.authorId == request.auth.uid &&
+        request.resource.data.authorId == resource.data.authorId &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['text', 'mediaTitle', 'mediaType', 'rating', 'visibility']) &&
+        request.resource.data.text is string &&
+        request.resource.data.text.size() <= 1000 &&
+        request.resource.data.mediaTitle is string &&
+        request.resource.data.mediaTitle.size() <= 120 &&
+        (request.resource.data.text.size() > 0 ||
+          request.resource.data.mediaTitle.size() > 0) &&
+        request.resource.data.mediaType in ['book', 'movie', 'series', ''] &&
+        request.resource.data.visibility in ['public', 'followers'] &&
+        (get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.privacyUpdating == true ||
+          request.resource.data.visibility ==
+            (get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.isPrivate
+              ? 'followers'
+              : request.resource.data.visibility)) &&
+        (resource.data.kind == 'post'
+          ? request.resource.data.rating == null
+          : request.resource.data.rating is number &&
+            request.resource.data.rating >= 0 &&
+            request.resource.data.rating <= 5);
+      allow delete: if signedIn() && resource.data.authorId == request.auth.uid;
+
+      match /comments/{commentId} {
+        function parentPostReadable() {
+          let post = get(/databases/$(database)/documents/posts/$(postId)).data;
+          return canReadPost(post.authorId, post.visibility);
+        }
+
+        allow read: if parentPostReadable();
+        allow create: if signedIn() &&
+          parentPostReadable() &&
+          request.resource.data.keys().hasOnly([
+            'authorId', 'authorUsername', 'text', 'createdAt'
+          ]) &&
+          request.resource.data.authorId == request.auth.uid &&
+          request.resource.data.authorUsername is string &&
+          request.resource.data.authorUsername ==
+            get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.username &&
+          request.resource.data.text is string &&
+          request.resource.data.text.size() > 0 &&
+          request.resource.data.text.size() <= 500 &&
+          request.resource.data.createdAt == request.time;
+        allow update: if false;
+        allow delete: if signedIn() && resource.data.authorId == request.auth.uid;
       }
     }
   }

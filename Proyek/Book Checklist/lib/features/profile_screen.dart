@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
@@ -9,6 +8,7 @@ import '../core/theme/app_theme.dart';
 import '../core/widgets/shelf_widgets.dart';
 import '../domain/media_entry.dart';
 import '../providers/app_providers.dart';
+import '../providers/social_providers.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -268,12 +268,20 @@ class ProfileScreen extends ConsumerWidget {
                     title: const Text('Sign out'),
                     onTap: () async {
                       try {
+                        final user = ref.read(firebaseAuthProvider).currentUser;
+                        if (user != null) {
+                          await ref
+                              .read(socialPushServiceProvider)
+                              .disableForUser(user.uid);
+                        }
                         await ref.read(authRepositoryProvider).signOut();
-                      } on FirebaseException catch (error) {
+                      } catch (error) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('Could not sign out: $error'),
+                              content: Text(
+                                'Could not securely sign out: $error',
+                              ),
                             ),
                           );
                         }
